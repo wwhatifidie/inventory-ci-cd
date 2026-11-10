@@ -5,9 +5,9 @@ class Inventory:
         self.devices = []
 
     def add_device(self, device_id, name, serial_number):
-       # for dev in self.devices:
-        #    if dev['serial_number'] == serial_number:
-         #       raise ValueError("Serial number must be unique")
+        for dev in self.devices:
+            if dev['serial_number'] == serial_number:
+                raise ValueError("Serial number must be unique")
         
         self.devices.append({
             "id": device_id,
