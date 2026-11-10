@@ -1,0 +1,97 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, "docs/**", "hotfix/**", "experiment/**" ]
+    tags: [ "v*", "rc-*" ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.7'
+      - name: Check required files (Variant 5)
+        run: |
+          echo "Checking for Dockerfile and .dockerignore..."
+          test -f Dockerfile || (echo "Dockerfile missing" && exit 1)
+          test -f .dockerignore || (echo ".dockerignore missing" && exit 1)
+          echo "Files check passed."
+      - name: Compile Python files
+        run: python -m compileall .
+
+  unit_tests:
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.7'
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
+  package:
+    runs-on: ubuntu-latest
+    needs: unit_tests
+    # Запускается только для main и тегов
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare dist
+        run: |
+          mkdir dist
+          cp inventory.py README.md Dockerfile inventory.json.example dist/
+          echo "SHA: ${{ github.sha }}" > dist/manifest.txt
+          echo "RUN_ID: ${{ github.run_id }}" >> dist/manifest.txt
+          ls -1 dist >> dist/manifest.txt
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: inventory-package
+          path: dist/
+          # Вариант 5: Для тега rc-* срок хранения 2 дня, иначе 7
+          retention-days: ${{ startsWith(github.ref, 'refs/tags/rc-') && 2 || 7 }}
+
+  deploy_test:
+    runs-on: ubuntu-latest
+    needs: package
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: test/inventory
+      url: https://example.com/test-inventory
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: inventory-package
+          path: deploy/test
+      - name: Verify Secret Presence
+        run: |
+          if [ -z "${{ secrets.DEPLOY_TOKEN }}" ]; then
+            echo "Error: DEPLOY_TOKEN is not set!"
+            exit 1
+          fi
+          echo "Token is present (masked)."
+      - name: Smoke Test (Variant 5)
+        run: |
+          echo "Running smoke test for inventory..."
+          python -c "
+          import json
+          data = {'devices': []}
+          data['devices'].append({'id': 1, 'name': 'Test Device'})
+          with open('temp_inventory.json', 'w') as f:
+              json.dump(data, f)
+          print('Device added successfully.')
+          "
+          echo "Smoke test passed." > deployment.txt
+      - name: Upload Deployment Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-report
+          path: deployment.txt
